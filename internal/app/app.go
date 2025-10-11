@@ -1,7 +1,9 @@
 package app
 
 import (
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 )
 
@@ -17,4 +19,10 @@ func NewApplication() (*Application, error) {
 	}
 
 	return app, nil
+}
+
+func (a *Application) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(a.Logger.Writer(), "Health check endpoint hit\n")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }

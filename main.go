@@ -1,14 +1,20 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/tsatsarig/go-project/internal/app"
+	"github.com/tsatsarig/go-project/internal/routes"
 )
 
 func main() {
+	var port int
+	flag.IntVar(&port, "port", 8080, "Port to run the server on")
+	flag.Parse()
+
 	app, err := app.NewApplication()
 	if err != nil {
 		panic(err)
@@ -16,10 +22,10 @@ func main() {
 
 	app.Logger.Printf("Starting application...")
 
-	http.HandleFunc("/health", HealthCheck)
-
+	r := routes.SetupRoutes(app)
 	server := &http.Server{
-		Addr:         ":8080",
+		Addr:         fmt.Sprintf(":%d", port),
+		Handler:      r,
 		IdleTimeout:  time.Minute,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -29,10 +35,4 @@ func main() {
 	if err != nil {
 		app.Logger.Fatalf("Error starting server: %v", err)
 	}
-}
-
-func HealthCheck(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("Health check endpoint hit\n")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
 }
