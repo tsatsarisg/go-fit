@@ -1,4 +1,4 @@
-module github.com/tsatsarig/go-project
+module github.com/tsatsarisg/go-fit
 
 go 1.24.4
 

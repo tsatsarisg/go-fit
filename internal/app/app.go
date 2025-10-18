@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/tsatsarig/go-project/internal/api"
-	"github.com/tsatsarig/go-project/internal/store"
-	"github.com/tsatsarig/go-project/migrations"
+	"github.com/tsatsarisg/go-fit/internal/api"
+	"github.com/tsatsarisg/go-fit/internal/store"
+	"github.com/tsatsarisg/go-fit/migrations"
 )
 
 type Application struct {

@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/tsatsarig/go-project/internal/app"
-	"github.com/tsatsarig/go-project/internal/routes"
+	"github.com/tsatsarisg/go-fit/internal/app"
+	"github.com/tsatsarisg/go-fit/internal/routes"
 )
 
 func main() {

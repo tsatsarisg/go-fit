@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/tsatsarig/go-project/internal/store"
-	"github.com/tsatsarig/go-project/internal/utils"
+	"github.com/tsatsarisg/go-fit/internal/store"
+	"github.com/tsatsarisg/go-fit/internal/utils"
 )
 
 type registerUserRequest struct {
