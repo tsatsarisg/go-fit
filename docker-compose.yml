@@ -16,6 +16,21 @@ services:
     networks:
       - workout-network
 
+  test_db:
+    container_name: "workout-test-db"
+    image: postgres:12.4-alpine
+    volumes:
+      - ./database/postgres-test-data:/var/lib/postgresql/data:rw
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: "postgres"
+    restart: unless-stopped
+    networks:
+      - workout-network
+
 networks:
   workout-network:
     driver: bridge
