@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/tsatsarisg/go-fit/internal/api"
+	"github.com/tsatsarisg/go-fit/internal/middleware"
 	"github.com/tsatsarisg/go-fit/internal/store"
 	"github.com/tsatsarisg/go-fit/migrations"
 )
@@ -17,6 +18,7 @@ type Application struct {
 	WorkoutHandler *api.WorkoutHandler
 	UserHandler    *api.UserHandler
 	TokenHandler   *api.TokenHandler
+	Middleware     *middleware.UserMiddleware
 	DB             *sql.DB
 }
 
@@ -43,11 +45,17 @@ func NewApplication() (*Application, error) {
 	userHandler := api.NewUserHandler(userStore, logger)
 	tokenHandler := api.NewTokenHandler(tokenStore, userStore, logger)
 
+	// middleware
+	userMiddleware := &middleware.UserMiddleware{
+		UserStore: userStore,
+	}
+
 	app := &Application{
 		Logger:         logger,
 		WorkoutHandler: workoutHandler,
 		UserHandler:    userHandler,
 		TokenHandler:   tokenHandler,
+		Middleware:     userMiddleware,
 		DB:             pgDB,
 	}
 
