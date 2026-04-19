@@ -26,7 +26,7 @@ func SetUser(r *http.Request, user *store.User) *http.Request {
 func GetUser(r *http.Request) *store.User {
 	user, ok := r.Context().Value(userContextKey).(*store.User)
 	if !ok {
-		panic("user not found in context")
+		return store.AnonymousUser
 	}
 	return user
 }

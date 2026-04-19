@@ -54,8 +54,7 @@ func (wh *WorkoutHandler) HandleCreateWorkout(w http.ResponseWriter, r *http.Req
 	}
 
 	currentUser := middleware.GetUser(r)
-	if currentUser == nil || currentUser == store.AnonymousUser {
-		wh.logger.Printf("ERROR: HandleCreateWorkout: unauthenticated user\n")
+	if currentUser.IsAnonymous() {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthenticated"})
 		return
 	}
@@ -121,25 +120,11 @@ func (wh *WorkoutHandler) HandleUpdateWorkout(w http.ResponseWriter, r *http.Req
 	}
 
 	currentUser := middleware.GetUser(r)
-	if currentUser == nil || currentUser == store.AnonymousUser || existingWorkout.UserID != currentUser.ID {
-		wh.logger.Printf("ERROR: HandleUpdateWorkout: unauthorized user\n")
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthorized"})
+	if currentUser.IsAnonymous() {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthenticated"})
 		return
 	}
-
-	workoutOwner, err := wh.workoutStore.GetWorkoutOwner(int(workoutID))
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			utils.WriteJson(w, http.StatusNotFound, utils.Envelope{"error": "Workout not found"})
-			return
-		}
-		wh.logger.Printf("ERROR: GetWorkoutOwner: %v\n", err)
-		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "Failed to retrieve workout owner"})
-		return
-	}
-
-	if workoutOwner != currentUser.ID {
-		wh.logger.Printf("ERROR: HandleUpdateWorkout: unauthorized user\n")
+	if existingWorkout.UserID != currentUser.ID {
 		utils.WriteJson(w, http.StatusForbidden, utils.Envelope{"error": "Forbidden"})
 		return
 	}
@@ -163,9 +148,8 @@ func (wh *WorkoutHandler) HandleDeleteWorkout(w http.ResponseWriter, r *http.Req
 	}
 
 	currentUser := middleware.GetUser(r)
-	if currentUser == nil || currentUser == store.AnonymousUser {
-		wh.logger.Printf("ERROR: HandleUpdateWorkout: unauthorized user\n")
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthorized"})
+	if currentUser.IsAnonymous() {
+		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Unauthenticated"})
 		return
 	}
 

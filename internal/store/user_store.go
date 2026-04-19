@@ -9,12 +9,10 @@ import (
 )
 
 type password struct {
-	plainText string
-	hash      []byte
+	hash []byte
 }
 
 func (p *password) Set(plainText string) error {
-	p.plainText = plainText
 	hash, err := bcrypt.GenerateFromPassword([]byte(plainText), bcrypt.DefaultCost)
 	if err != nil {
 		return err
@@ -49,6 +47,32 @@ var AnonymousUser = &User{}
 
 func (u *User) IsAnonymous() bool {
 	return u == AnonymousUser
+}
+
+var dummyPasswordHash = func() []byte {
+	h, err := bcrypt.GenerateFromPassword([]byte("timing-equalization-dummy"), bcrypt.DefaultCost)
+	if err != nil {
+		panic(err)
+	}
+	return h
+}()
+
+// VerifyPassword runs bcrypt against the user's hash, or against a fixed dummy
+// hash when user is nil, so response timing does not reveal whether the
+// username existed. Returns (true, nil) only on a real match.
+func VerifyPassword(user *User, plainText string) (bool, error) {
+	hash := dummyPasswordHash
+	if user != nil {
+		hash = user.PasswordHash.hash
+	}
+	err := bcrypt.CompareHashAndPassword(hash, []byte(plainText))
+	if err == bcrypt.ErrMismatchedHashAndPassword {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return user != nil, nil
 }
 
 type PostgresUserStore struct {
@@ -94,19 +118,10 @@ func (store *PostgresUserStore) GetUserByUsername(username string) (*User, error
 }
 
 func (store *PostgresUserStore) UpdateUser(user *User) error {
-	query := `UPDATE users SET email = $1, username = $2, bio = $3, updated_at = NOW() WHERE username = $4 RETURNING updated_at`
-	result, err := store.db.Exec(query, user.Email, user.Username, user.Bio)
-
+	query := `UPDATE users SET email = $1, username = $2, bio = $3, updated_at = NOW() WHERE id = $4 RETURNING updated_at`
+	err := store.db.QueryRow(query, user.Email, user.Username, user.Bio, user.ID).Scan(&user.UpdatedAt)
 	if err != nil {
 		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rowsAffected == 0 {
-		return sql.ErrNoRows
 	}
 	return nil
 }
@@ -116,7 +131,7 @@ func (store *PostgresUserStore) GetUserToken(scope, plainTextPassword string) (*
 	query := `	SELECT u.id, u.username, u.email, u.password_hash, u.bio, u.created_at, u.updated_at
 				FROM users u
 				INNER JOIN tokens t ON u.id = t.user_id
-				WHERE t.scope = $1 AND t.token_hash = $2 AND t.expiry > $3`
+				WHERE t.scope = $1 AND t.hash = $2 AND t.expiry > $3`
 
 	user := &User{
 		PasswordHash: password{},

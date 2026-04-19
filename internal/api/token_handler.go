@@ -40,21 +40,19 @@ func (h *TokenHandler) HandleCreateToken(w http.ResponseWriter, r *http.Request)
 	}
 
 	user, err := h.userStore.GetUserByUsername(req.Username)
-	if err != nil || user == nil {
-		h.logger.Println("ERROR: GetUserByUsername failed:", err)
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "internal error"})
-		return
-	}
-
-	passwordsDoMatch, err := user.PasswordHash.Matches(req.Password)
 	if err != nil {
-		h.logger.Println("ERROR: Password hash matching failed:", err)
-		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "invalid credentials"})
+		h.logger.Println("ERROR: GetUserByUsername failed:", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal error"})
 		return
 	}
 
-	if !passwordsDoMatch {
-		h.logger.Println("ERROR: Passwords do not match")
+	ok, err := store.VerifyPassword(user, req.Password)
+	if err != nil {
+		h.logger.Println("ERROR: VerifyPassword failed:", err)
+		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal error"})
+		return
+	}
+	if !ok {
 		utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "invalid credentials"})
 		return
 	}
