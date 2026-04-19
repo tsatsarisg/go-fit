@@ -9,11 +9,12 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/tsatsarisg/go-fit/internal/platform/postgres"
+	"github.com/tsatsarisg/go-fit/internal/user"
 )
 
 // setupTestDB wipes the workouts-related tables and seeds a single user so
 // the FK on workouts.user_id can be satisfied. Returns the seeded user's id.
-func setupTestDB(t *testing.T) (*sql.DB, int) {
+func setupTestDB(t *testing.T) (*sql.DB, user.UserID) {
 	db, err := sql.Open("pgx", "host=localhost port=5433 user=postgres password=postgres dbname=postgres sslmode=disable")
 	if err != nil {
 		t.Fatalf("failed to connect to test database: %v", err)
@@ -30,7 +31,7 @@ func setupTestDB(t *testing.T) (*sql.DB, int) {
 		t.Fatalf("failed to truncate tables: %v", err)
 	}
 
-	var userID int
+	var userID user.UserID
 	err = db.QueryRowContext(ctx, `
 		INSERT INTO users (username, email, password_hash, bio)
 		VALUES ($1, $2, $3, $4)

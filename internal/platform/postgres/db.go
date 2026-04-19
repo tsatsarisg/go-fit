@@ -5,16 +5,16 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"time"
 
-	_ "github.com/jackc/pgx/v4/stdlib"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 )
 
 // Open opens a database connection using the supplied DSN, applies pool
 // limits, and verifies connectivity with a PingContext before returning.
-func Open(ctx context.Context, dsn string, logger *log.Logger) (*sql.DB, error) {
+func Open(ctx context.Context, dsn string, logger *slog.Logger) (*sql.DB, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -31,7 +31,7 @@ func Open(ctx context.Context, dsn string, logger *log.Logger) (*sql.DB, error) 
 	}
 
 	if logger != nil {
-		logger.Println("Database connection opened successfully")
+		logger.InfoContext(ctx, "database connection opened")
 	}
 
 	return db, nil

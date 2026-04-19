@@ -36,3 +36,6 @@ go.work
 
 /database
 ./database
+
+# Local scratch / personal notes
+post_notes.txt

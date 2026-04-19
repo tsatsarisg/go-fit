@@ -1,51 +1,72 @@
 package user
 
 import (
+	"errors"
+	"fmt"
+	"net/mail"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
-// password wraps a bcrypt hash so the plaintext never leaks into logs or JSON.
+// UserID is a named int64 wrapping the users.id column. Named so the compiler
+// refuses to accept (say) a workout id where a user id is expected — kills
+// the id-mixup bug class D2 calls out. int64 matches the DB BIGSERIAL and
+// also incidentally resolves L3 (ReadIdParam returns int64).
+type UserID int64
+
+// Email is a normalized, syntactically-valid email address. Zero value is
+// not a valid Email; construct via NewEmail. String-backed so database/sql
+// Scan and encoding/json marshal work without custom methods.
+type Email string
+
+// NewEmail parses s with net/mail.ParseAddress and returns it lowercased.
+// Normalization is intentional: it collapses case variants so the unique
+// constraint on users.email catches them.
+func NewEmail(s string) (Email, error) {
+	if s == "" {
+		return "", errors.New("email is required")
+	}
+	addr, err := mail.ParseAddress(s)
+	if err != nil {
+		return "", fmt.Errorf("invalid email: %w", err)
+	}
+	return Email(strings.ToLower(addr.Address)), nil
+}
+
+func (e Email) String() string { return string(e) }
+
+// password wraps a bcrypt hash. The field is unexported and the type has no
+// setter — instances come only from HashPassword or a DB scan — so plaintext
+// is never retained on the value. Zero value (nil hash) is meaningful only
+// for the timing-equalization path in VerifyPassword.
 type password struct {
 	hash []byte
 }
 
-func (p *password) Set(plainText string) error {
-	hash, err := bcrypt.GenerateFromPassword([]byte(plainText), bcrypt.DefaultCost)
-	if err != nil {
-		return err
+// Matches reports whether plaintext is the password behind this hash.
+// Returns (false, nil) for a well-formed mismatch so callers don't need to
+// special-case bcrypt.ErrMismatchedHashAndPassword themselves.
+func (p password) Matches(plaintext string) (bool, error) {
+	err := bcrypt.CompareHashAndPassword(p.hash, []byte(plaintext))
+	if err == bcrypt.ErrMismatchedHashAndPassword {
+		return false, nil
 	}
-	p.hash = hash
-	return nil
-}
-
-func (p *password) Matches(plainText string) (bool, error) {
-	err := bcrypt.CompareHashAndPassword(p.hash, []byte(plainText))
-
 	if err != nil {
-		if err == bcrypt.ErrMismatchedHashAndPassword {
-			return false, nil
-		}
 		return false, err
 	}
 	return true, nil
 }
 
 type User struct {
-	ID           int       `json:"id"`
+	ID           UserID    `json:"id"`
 	Username     string    `json:"username"`
-	Email        string    `json:"email"`
+	Email        Email     `json:"email"`
 	PasswordHash password  `json:"-"`
 	Bio          string    `json:"bio,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-}
-
-var AnonymousUser = &User{}
-
-func (u *User) IsAnonymous() bool {
-	return u == AnonymousUser
 }
 
 var dummyPasswordHash = func() []byte {

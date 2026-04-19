@@ -1,18 +1,16 @@
 package auth
 
 import (
-	"log"
+	"errors"
+	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/tsatsarisg/go-fit/internal/httpx"
-	"github.com/tsatsarisg/go-fit/internal/user"
 )
 
 type Handler struct {
-	tokenStore Store
-	userStore  user.Store
-	logger     *log.Logger
+	service *Service
+	logger  *slog.Logger
 }
 
 type createTokenRequest struct {
@@ -20,43 +18,28 @@ type createTokenRequest struct {
 	Password string `json:"password"`
 }
 
-func NewHandler(tokenStore Store, userStore user.Store, logger *log.Logger) *Handler {
-	return &Handler{
-		tokenStore: tokenStore,
-		userStore:  userStore,
-		logger:     logger,
-	}
+func NewHandler(service *Service, logger *slog.Logger) *Handler {
+	return &Handler{service: service, logger: logger}
 }
 
 func (h *Handler) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 	var req createTokenRequest
 	if derr := httpx.DecodeJSONBody(w, r, &req); derr != nil {
-		h.logger.Println("Error decoding create token request:", derr)
+		h.logger.WarnContext(r.Context(), "decode create token", slog.Any("err", derr))
 		httpx.WriteDecodeError(w, derr)
 		return
 	}
 
-	u, err := h.userStore.GetUserByUsername(r.Context(), req.Username)
+	token, err := h.service.Login(r.Context(), LoginCommand{
+		Username: req.Username,
+		Password: req.Password,
+	})
 	if err != nil {
-		h.logger.Println("ERROR: GetUserByUsername failed:", err)
-		httpx.WriteJson(w, http.StatusInternalServerError, httpx.Envelope{"error": "internal error"})
-		return
-	}
-
-	ok, err := user.VerifyPassword(u, req.Password)
-	if err != nil {
-		h.logger.Println("ERROR: VerifyPassword failed:", err)
-		httpx.WriteJson(w, http.StatusInternalServerError, httpx.Envelope{"error": "internal error"})
-		return
-	}
-	if !ok {
-		httpx.WriteJson(w, http.StatusUnauthorized, httpx.Envelope{"error": "invalid credentials"})
-		return
-	}
-
-	token, err := h.tokenStore.CreateNewToken(r.Context(), u.ID, 24*time.Hour, user.ScopeAuth)
-	if err != nil {
-		h.logger.Println("ERROR: CreateNewToken failed:", err)
+		if errors.Is(err, ErrInvalidCredentials) {
+			httpx.WriteJson(w, http.StatusUnauthorized, httpx.Envelope{"error": "invalid credentials"})
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "login failed", slog.Any("err", err))
 		httpx.WriteJson(w, http.StatusInternalServerError, httpx.Envelope{"error": "internal error"})
 		return
 	}
@@ -64,22 +47,20 @@ func (h *Handler) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 	// 200 OK — token creation is RPC-style authentication, not a REST
 	// resource creation (no addressable URI for the token).
 	httpx.WriteJson(w, http.StatusOK, httpx.Envelope{"token": token.Plaintext, "expiry": token.Expiry})
-
 }
 
 // HandleLogout revokes every authentication-scoped token for the current
-// user. Requires an authenticated request; RequireAuthenticatedUser guards
-// the route so an anonymous caller never reaches here, but we double-check
-// defensively.
+// principal. RequireAuthenticatedUser guards the route so an anonymous
+// caller never reaches here, but we double-check defensively.
 func (h *Handler) HandleLogout(w http.ResponseWriter, r *http.Request) {
-	currentUser := user.GetUser(r)
-	if currentUser.IsAnonymous() {
+	p := GetPrincipal(r)
+	if p.IsAnonymous() {
 		httpx.WriteJson(w, http.StatusUnauthorized, httpx.Envelope{"error": "Unauthenticated"})
 		return
 	}
 
-	if err := h.tokenStore.DeleteAllForUser(r.Context(), user.ScopeAuth, currentUser.ID); err != nil {
-		h.logger.Println("ERROR: DeleteAllForUser failed:", err)
+	if err := h.service.Logout(r.Context(), p.ID); err != nil {
+		h.logger.ErrorContext(r.Context(), "logout failed", slog.Any("err", err))
 		httpx.WriteJson(w, http.StatusInternalServerError, httpx.Envelope{"error": "internal error"})
 		return
 	}

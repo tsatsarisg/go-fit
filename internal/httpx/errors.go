@@ -1,9 +1,10 @@
 package httpx
 
 import (
+	"context"
 	"database/sql"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/tsatsarisg/go-fit/internal/platform/postgres"
@@ -35,7 +36,9 @@ type StoreErrorMapping struct {
 // Response bodies are intentionally generic to avoid leaking which column /
 // constraint was violated (e.g. enumeration resistance on duplicate email vs.
 // username during registration).
-func WriteStoreError(w http.ResponseWriter, logger *log.Logger, err error, m StoreErrorMapping, fallbackMsg string) {
+// WriteStoreError takes the request context so the fallback 500 log line is
+// emitted via ErrorContext — that route the request_id attribution wrapper.
+func WriteStoreError(ctx context.Context, w http.ResponseWriter, logger *slog.Logger, err error, m StoreErrorMapping, fallbackMsg string) {
 	resource := m.ResourceName
 	if resource == "" {
 		resource = "resource"
@@ -54,7 +57,7 @@ func WriteStoreError(w http.ResponseWriter, logger *log.Logger, err error, m Sto
 		WriteJson(w, http.StatusNotFound, Envelope{"error": resource + " not found"})
 	default:
 		if logger != nil {
-			logger.Printf("ERROR: store call: %v\n", err)
+			logger.ErrorContext(ctx, "store call failed", slog.Any("err", err))
 		}
 		WriteJson(w, http.StatusInternalServerError, Envelope{"error": fallbackMsg})
 	}
