@@ -1,4 +1,4 @@
-package tokens
+package auth
 
 import (
 	"crypto/rand"
@@ -6,18 +6,6 @@ import (
 	"encoding/base32"
 	"time"
 )
-
-const (
-	ScopeAuth = "authentication"
-)
-
-type Token struct {
-	Plaintext string    `json:"token"`
-	Hash      []byte    `json:"-"`
-	UserID    int       `json:"-"`
-	Expiry    time.Time `json:"expiry"`
-	Scope     string    `json:"-"`
-}
 
 func GenerateToken(userID int, ttl time.Duration, scope string) (*Token, error) {
 	token := &Token{

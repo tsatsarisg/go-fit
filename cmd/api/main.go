@@ -14,7 +14,6 @@ import (
 
 	"github.com/tsatsarisg/go-fit/internal/app"
 	"github.com/tsatsarisg/go-fit/internal/config"
-	"github.com/tsatsarisg/go-fit/internal/routes"
 )
 
 func main() {
@@ -56,7 +55,7 @@ func run() error {
 
 	application.Logger.Printf("Starting application on :%d (env=%s)...", cfg.Port, cfg.Env)
 
-	r := routes.SetupRoutes(application)
+	r := application.Routes()
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
 		Handler:      r,

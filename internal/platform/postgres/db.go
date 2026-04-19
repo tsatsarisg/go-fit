@@ -1,4 +1,4 @@
-package store
+package postgres
 
 import (
 	"context"
@@ -47,7 +47,9 @@ func MigrateFS(db *sql.DB, migrationFs fs.FS, dir string) error {
 }
 
 func Migrate(db *sql.DB, dir string) error {
-	err := goose.SetDialect("pgx")
+	// "postgres" is the canonical goose dialect string; "pgx" is accepted
+	// as an alias but the public Dialect constant is DialectPostgres.
+	err := goose.SetDialect("postgres")
 	if err != nil {
 		return fmt.Errorf("failed to set dialect: %w", err)
 	}

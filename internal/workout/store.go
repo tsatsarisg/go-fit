@@ -1,38 +1,27 @@
-package store
+package workout
 
 import (
 	"context"
 	"database/sql"
 	"errors"
+
+	"github.com/tsatsarisg/go-fit/internal/platform/postgres"
 )
 
-type Workout struct {
-	ID              int            `json:"id"`
-	UserID          int            `json:"user_id"`
-	Title           string         `json:"title"`
-	Description     string         `json:"description"`
-	DurationMinutes int            `json:"duration_minutes"`
-	CaloriesBurned  int            `json:"calories_burned"`
-	Entries         []WorkoutEntry `json:"entries"`
-}
+// Domain-level sentinels. ErrNotFound corresponds to "workout id doesn't exist",
+// ErrForbidden to "row exists but belongs to a different user" — callers use
+// errors.Is to map to the appropriate HTTP status.
+var (
+	ErrNotFound  = errors.New("workout not found")
+	ErrForbidden = errors.New("forbidden")
+)
 
-type WorkoutEntry struct {
-	ID              int      `json:"id"`
-	ExerciseName    string   `json:"exercise_name"`
-	Sets            int      `json:"sets"`
-	Reps            *int     `json:"reps"`
-	DurationSeconds *int     `json:"duration_seconds"`
-	Weight          *float64 `json:"weight"`
-	Notes           string   `json:"notes"`
-	OrderIndex      int      `json:"order_index"`
-}
-
-type PostgresWorkoutStore struct {
+type PostgresStore struct {
 	db *sql.DB
 }
 
-func NewPostgresWorkoutStore(db *sql.DB) *PostgresWorkoutStore {
-	return &PostgresWorkoutStore{db: db}
+func NewPostgresStore(db *sql.DB) *PostgresStore {
+	return &PostgresStore{db: db}
 }
 
 type WorkoutPatch struct {
@@ -45,7 +34,7 @@ type WorkoutPatch struct {
 	Entries *[]WorkoutEntry
 }
 
-type WorkoutStore interface {
+type Store interface {
 	CreateWorkout(ctx context.Context, workout *Workout) (*Workout, error)
 	GetWorkoutByID(ctx context.Context, id int) (*Workout, error)
 	UpdateWorkout(ctx context.Context, id int, userID int, patch WorkoutPatch) (*Workout, error)
@@ -53,7 +42,7 @@ type WorkoutStore interface {
 	GetWorkoutOwner(ctx context.Context, id int) (int, error)
 }
 
-func (pg *PostgresWorkoutStore) CreateWorkout(ctx context.Context, workout *Workout) (*Workout, error) {
+func (pg *PostgresStore) CreateWorkout(ctx context.Context, workout *Workout) (*Workout, error) {
 	tx, err := pg.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -67,7 +56,7 @@ func (pg *PostgresWorkoutStore) CreateWorkout(ctx context.Context, workout *Work
 	// Insert the workout
 	err = tx.QueryRowContext(ctx, query, workout.UserID, workout.Title, workout.Description, workout.DurationMinutes, workout.CaloriesBurned).Scan(&workout.ID)
 	if err != nil {
-		return nil, classify(err)
+		return nil, postgres.ClassifyError(err)
 	}
 
 	// Insert the workout entries
@@ -81,7 +70,7 @@ func (pg *PostgresWorkoutStore) CreateWorkout(ctx context.Context, workout *Work
 		entry := &workout.Entries[i]
 		err = tx.QueryRowContext(ctx, query, workout.ID, entry.ExerciseName, entry.Sets, entry.Reps, entry.DurationSeconds, entry.Weight, entry.Notes, entry.OrderIndex).Scan(&entry.ID)
 		if err != nil {
-			return nil, classify(err)
+			return nil, postgres.ClassifyError(err)
 		}
 	}
 
@@ -92,7 +81,7 @@ func (pg *PostgresWorkoutStore) CreateWorkout(ctx context.Context, workout *Work
 	return workout, nil
 }
 
-func (pg *PostgresWorkoutStore) GetWorkoutByID(ctx context.Context, id int) (*Workout, error) {
+func (pg *PostgresStore) GetWorkoutByID(ctx context.Context, id int) (*Workout, error) {
 	query := `SELECT id, user_id, title, description, duration_minutes, calories_burned
 			  FROM workouts
 			  WHERE id = $1`
@@ -135,7 +124,7 @@ func (pg *PostgresWorkoutStore) GetWorkoutByID(ctx context.Context, id int) (*Wo
 	return workout, nil
 }
 
-func (pg *PostgresWorkoutStore) UpdateWorkout(ctx context.Context, id int, userID int, patch WorkoutPatch) (*Workout, error) {
+func (pg *PostgresStore) UpdateWorkout(ctx context.Context, id int, userID int, patch WorkoutPatch) (*Workout, error) {
 	tx, err := pg.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -144,12 +133,14 @@ func (pg *PostgresWorkoutStore) UpdateWorkout(ctx context.Context, id int, userI
 
 	// Single round-trip: enforce ownership in SQL and preserve unspecified
 	// fields via COALESCE. Explicit casts keep pgx happy about parameter types
-	// when the typed pointer is nil.
+	// when the typed pointer is nil. updated_at always bumps on a successful
+	// update so the row's audit timestamp stays accurate.
 	updateQuery := `UPDATE workouts
 					SET title = COALESCE($1::text, title),
 					    description = COALESCE($2::text, description),
 					    duration_minutes = COALESCE($3::int, duration_minutes),
-					    calories_burned = COALESCE($4::int, calories_burned)
+					    calories_burned = COALESCE($4::int, calories_burned),
+					    updated_at = NOW()
 					WHERE id = $5 AND user_id = $6
 					RETURNING id, user_id, title, description, duration_minutes, calories_burned`
 
@@ -176,7 +167,7 @@ func (pg *PostgresWorkoutStore) UpdateWorkout(ctx context.Context, id int, userI
 		var ownerID int
 		probeErr := tx.QueryRowContext(ctx, `SELECT user_id FROM workouts WHERE id = $1`, id).Scan(&ownerID)
 		if errors.Is(probeErr, sql.ErrNoRows) {
-			return nil, ErrWorkoutNotFound
+			return nil, ErrNotFound
 		}
 		if probeErr != nil {
 			return nil, probeErr
@@ -186,10 +177,10 @@ func (pg *PostgresWorkoutStore) UpdateWorkout(ctx context.Context, id int, userI
 		}
 		// Row exists with matching user but UPDATE touched 0 rows — shouldn't
 		// happen; treat defensively as not found.
-		return nil, ErrWorkoutNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, classify(err)
+		return nil, postgres.ClassifyError(err)
 	}
 
 	// Entries: nil => leave existing rows untouched; non-nil => full replace.
@@ -210,7 +201,7 @@ func (pg *PostgresWorkoutStore) UpdateWorkout(ctx context.Context, id int, userI
 			entry := &newEntries[i]
 			err = tx.QueryRowContext(ctx, insertQuery, workout.ID, entry.ExerciseName, entry.Sets, entry.Reps, entry.DurationSeconds, entry.Weight, entry.Notes, entry.OrderIndex).Scan(&entry.ID)
 			if err != nil {
-				return nil, classify(err)
+				return nil, postgres.ClassifyError(err)
 			}
 		}
 	}
@@ -245,7 +236,7 @@ func (pg *PostgresWorkoutStore) UpdateWorkout(ctx context.Context, id int, userI
 	return workout, nil
 }
 
-func (pg *PostgresWorkoutStore) DeleteWorkout(ctx context.Context, id int) error {
+func (pg *PostgresStore) DeleteWorkout(ctx context.Context, id int) error {
 	tx, err := pg.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -277,13 +268,13 @@ func (pg *PostgresWorkoutStore) DeleteWorkout(ctx context.Context, id int) error
 	return nil
 }
 
-func (pg *PostgresWorkoutStore) GetWorkoutOwner(ctx context.Context, id int) (int, error) {
+func (pg *PostgresStore) GetWorkoutOwner(ctx context.Context, id int) (int, error) {
 	query := `SELECT user_id FROM workouts WHERE id = $1`
 
 	var userID int
 	err := pg.db.QueryRowContext(ctx, query, id).Scan(&userID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrWorkoutNotFound
+		return 0, ErrNotFound
 	}
 	if err != nil {
 		return 0, err
