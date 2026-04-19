@@ -1,13 +1,16 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/tsatsarisg/go-fit/internal/api"
+	"github.com/tsatsarisg/go-fit/internal/config"
 	"github.com/tsatsarisg/go-fit/internal/middleware"
 	"github.com/tsatsarisg/go-fit/internal/store"
 	"github.com/tsatsarisg/go-fit/migrations"
@@ -15,6 +18,7 @@ import (
 
 type Application struct {
 	Logger         *log.Logger
+	Config         *config.Config
 	WorkoutHandler *api.WorkoutHandler
 	UserHandler    *api.UserHandler
 	TokenHandler   *api.TokenHandler
@@ -22,18 +26,26 @@ type Application struct {
 	DB             *sql.DB
 }
 
-func NewApplication() (*Application, error) {
-	pgDB, err := store.Open()
+// NewApplication wires up the application's dependencies. The provided ctx is
+// used to bound potentially slow startup operations such as the initial DB
+// ping. Migration errors are returned rather than panicked so callers can
+// react and shut down cleanly.
+func NewApplication(ctx context.Context, cfg *config.Config) (*Application, error) {
+	logger := log.New(os.Stdout, "", log.Ldate|log.Ltime)
+
+	openCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	pgDB, err := store.Open(openCtx, cfg.DatabaseURL, logger)
 	if err != nil {
 		return nil, err
 	}
 
-	err = store.MigrateFS(pgDB, migrations.FS, ".")
-	if err != nil {
-		panic(err)
+	if err := store.MigrateFS(pgDB, migrations.FS, "."); err != nil {
+		_ = pgDB.Close()
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
-
-	logger := log.New(os.Stdout, "", log.Ldate|log.Ltime)
+	logger.Println("Database migrated successfully")
 
 	// stores
 	workoutStore := store.NewPostgresWorkoutStore(pgDB)
@@ -52,6 +64,7 @@ func NewApplication() (*Application, error) {
 
 	app := &Application{
 		Logger:         logger,
+		Config:         cfg,
 		WorkoutHandler: workoutHandler,
 		UserHandler:    userHandler,
 		TokenHandler:   tokenHandler,

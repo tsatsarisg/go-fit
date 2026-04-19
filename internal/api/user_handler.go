@@ -40,8 +40,8 @@ func (h *UserHandler) validateRegisterRequest(req *registerUserRequest) error {
 		return errors.New("invalid email format")
 	}
 
-	if len(req.Password) < 6 {
-		return errors.New("password must be at least 6 characters long")
+	if len(req.Password) < 12 {
+		return errors.New("password must be at least 12 characters long")
 	}
 
 	return nil
@@ -73,10 +73,9 @@ func (h *UserHandler) HandleRegisterUser(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	err = h.userStore.CreateUser(user)
+	err = h.userStore.CreateUser(r.Context(), user)
 	if err != nil {
-		h.logger.Println("Error creating user:", err)
-		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		writeStoreError(w, h.logger, err, "internal server error")
 		return
 	}
 

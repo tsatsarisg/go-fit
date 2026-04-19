@@ -1,8 +1,10 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -84,31 +86,31 @@ func NewPostgresUserStore(db *sql.DB) *PostgresUserStore {
 }
 
 type UserStore interface {
-	CreateUser(user *User) error
-	GetUserByUsername(username string) (*User, error)
-	UpdateUser(user *User) error
-	GetUserToken(scope, plainTextPassword string) (*User, error)
+	CreateUser(ctx context.Context, user *User) error
+	GetUserByUsername(ctx context.Context, username string) (*User, error)
+	UpdateUser(ctx context.Context, user *User) error
+	GetUserToken(ctx context.Context, scope, plainTextPassword string) (*User, error)
 }
 
-func (store *PostgresUserStore) CreateUser(user *User) error {
+func (store *PostgresUserStore) CreateUser(ctx context.Context, user *User) error {
 	query := `INSERT INTO users (username, email, password_hash, bio)
 			  VALUES ($1, $2, $3, $4) RETURNING id, created_at, updated_at`
-	err := store.db.QueryRow(query, user.Username, user.Email, user.PasswordHash.hash, user.Bio).Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
+	err := store.db.QueryRowContext(ctx, query, user.Username, user.Email, user.PasswordHash.hash, user.Bio).Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
-		return err
+		return classify(err)
 	}
 	return nil
 }
 
-func (store *PostgresUserStore) GetUserByUsername(username string) (*User, error) {
+func (store *PostgresUserStore) GetUserByUsername(ctx context.Context, username string) (*User, error) {
 	user := &User{
 		PasswordHash: password{},
 	}
 	query := `SELECT id, username, email, password_hash, bio, created_at, updated_at FROM users WHERE username = $1`
-	row := store.db.QueryRow(query, username)
+	row := store.db.QueryRowContext(ctx, query, username)
 
 	err := row.Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash.hash, &user.Bio, &user.CreatedAt, &user.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -117,16 +119,16 @@ func (store *PostgresUserStore) GetUserByUsername(username string) (*User, error
 	return user, nil
 }
 
-func (store *PostgresUserStore) UpdateUser(user *User) error {
+func (store *PostgresUserStore) UpdateUser(ctx context.Context, user *User) error {
 	query := `UPDATE users SET email = $1, username = $2, bio = $3, updated_at = NOW() WHERE id = $4 RETURNING updated_at`
-	err := store.db.QueryRow(query, user.Email, user.Username, user.Bio, user.ID).Scan(&user.UpdatedAt)
+	err := store.db.QueryRowContext(ctx, query, user.Email, user.Username, user.Bio, user.ID).Scan(&user.UpdatedAt)
 	if err != nil {
-		return err
+		return classify(err)
 	}
 	return nil
 }
 
-func (store *PostgresUserStore) GetUserToken(scope, plainTextPassword string) (*User, error) {
+func (store *PostgresUserStore) GetUserToken(ctx context.Context, scope, plainTextPassword string) (*User, error) {
 	tokenHash := sha256.Sum256([]byte(plainTextPassword))
 	query := `	SELECT u.id, u.username, u.email, u.password_hash, u.bio, u.created_at, u.updated_at
 				FROM users u
@@ -136,8 +138,8 @@ func (store *PostgresUserStore) GetUserToken(scope, plainTextPassword string) (*
 	user := &User{
 		PasswordHash: password{},
 	}
-	err := store.db.QueryRow(query, scope, tokenHash[:], time.Now()).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash.hash, &user.Bio, &user.CreatedAt, &user.UpdatedAt)
-	if err == sql.ErrNoRows {
+	err := store.db.QueryRowContext(ctx, query, scope, tokenHash[:], time.Now()).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash.hash, &user.Bio, &user.CreatedAt, &user.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

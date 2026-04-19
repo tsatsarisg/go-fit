@@ -48,7 +48,7 @@ func (mw *UserMiddleware) Authenticate(next http.Handler) http.Handler {
 		}
 
 		tokenString := headerParts[1]
-		user, err := mw.UserStore.GetUserToken(tokens.ScopeAuth, tokenString)
+		user, err := mw.UserStore.GetUserToken(r.Context(), tokens.ScopeAuth, tokenString)
 		if err != nil {
 			utils.WriteJson(w, http.StatusUnauthorized, utils.Envelope{"error": "Invalid token"})
 			return

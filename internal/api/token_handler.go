@@ -39,7 +39,7 @@ func (h *TokenHandler) HandleCreateToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	user, err := h.userStore.GetUserByUsername(req.Username)
+	user, err := h.userStore.GetUserByUsername(r.Context(), req.Username)
 	if err != nil {
 		h.logger.Println("ERROR: GetUserByUsername failed:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal error"})
@@ -57,7 +57,7 @@ func (h *TokenHandler) HandleCreateToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	token, err := h.tokenStore.CreateNewToken(user.ID, 24*time.Hour, tokens.ScopeAuth)
+	token, err := h.tokenStore.CreateNewToken(r.Context(), user.ID, 24*time.Hour, tokens.ScopeAuth)
 	if err != nil {
 		h.logger.Println("ERROR: CreateNewToken failed:", err)
 		utils.WriteJson(w, http.StatusInternalServerError, utils.Envelope{"error": "internal error"})

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"time"
 
@@ -16,18 +17,18 @@ func NewPostgresTokensStore(db *sql.DB) *PostgresTokensStore {
 }
 
 type TokensStore interface {
-	Insert(token *tokens.Token) error
-	CreateNewToken(userID int, ttl time.Duration, scope string) (*tokens.Token, error)
-	DeleteAllForUser(scope string, userID int) error
+	Insert(ctx context.Context, token *tokens.Token) error
+	CreateNewToken(ctx context.Context, userID int, ttl time.Duration, scope string) (*tokens.Token, error)
+	DeleteAllForUser(ctx context.Context, scope string, userID int) error
 }
 
-func (pts *PostgresTokensStore) CreateNewToken(userID int, ttl time.Duration, scope string) (*tokens.Token, error) {
+func (pts *PostgresTokensStore) CreateNewToken(ctx context.Context, userID int, ttl time.Duration, scope string) (*tokens.Token, error) {
 	token, err := tokens.GenerateToken(userID, ttl, scope)
 	if err != nil {
 		return nil, err
 	}
 
-	err = pts.Insert(token)
+	err = pts.Insert(ctx, token)
 	if err != nil {
 		return nil, err
 	}
@@ -35,20 +36,20 @@ func (pts *PostgresTokensStore) CreateNewToken(userID int, ttl time.Duration, sc
 	return token, nil
 }
 
-func (pts *PostgresTokensStore) Insert(token *tokens.Token) error {
+func (pts *PostgresTokensStore) Insert(ctx context.Context, token *tokens.Token) error {
 	query := `
 		INSERT INTO tokens (hash, user_id, expiry, scope)
 		VALUES ($1, $2, $3, $4)`
 
-	_, err := pts.db.Exec(query, token.Hash, token.UserID, token.Expiry, token.Scope)
+	_, err := pts.db.ExecContext(ctx, query, token.Hash, token.UserID, token.Expiry, token.Scope)
 	return err
 }
 
-func (pts *PostgresTokensStore) DeleteAllForUser(scope string, userID int) error {
+func (pts *PostgresTokensStore) DeleteAllForUser(ctx context.Context, scope string, userID int) error {
 	query := `
 		DELETE FROM tokens
 		WHERE scope = $1 AND user_id = $2`
 
-	_, err := pts.db.Exec(query, scope, userID)
+	_, err := pts.db.ExecContext(ctx, query, scope, userID)
 	return err
 }

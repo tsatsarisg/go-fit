@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 
@@ -19,7 +20,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("failed to run migrations: %v", err)
 	}
 
-	_, err = db.Exec(`TRUNCATE TABLE workout_entries CASCADE;`)
+	_, err = db.ExecContext(context.Background(), `TRUNCATE TABLE workout_entries CASCADE;`)
 	if err != nil {
 		t.Fatalf("failed to truncate workout_entries table: %v", err)
 	}
@@ -88,7 +89,8 @@ func TestCreate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			createdWorkout, err := store.CreateWorkout(tt.workout)
+			ctx := context.Background()
+			createdWorkout, err := store.CreateWorkout(ctx, tt.workout)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -101,7 +103,7 @@ func TestCreate(t *testing.T) {
 			assert.Equal(t, tt.workout.CaloriesBurned, createdWorkout.CaloriesBurned)
 			assert.Len(t, createdWorkout.Entries, len(tt.workout.Entries))
 
-			retrievedWorkout, err := store.GetWorkoutByID(createdWorkout.ID)
+			retrievedWorkout, err := store.GetWorkoutByID(ctx, createdWorkout.ID)
 			assert.NoError(t, err)
 			assert.Equal(t, createdWorkout, retrievedWorkout)
 			assert.Equal(t, len(tt.workout.Entries), len(retrievedWorkout.Entries))

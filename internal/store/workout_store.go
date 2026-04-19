@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 )
 
 type Workout struct {
@@ -33,16 +35,26 @@ func NewPostgresWorkoutStore(db *sql.DB) *PostgresWorkoutStore {
 	return &PostgresWorkoutStore{db: db}
 }
 
-type WorkoutStore interface {
-	CreateWorkout(workout *Workout) (*Workout, error)
-	GetWorkoutByID(id int) (*Workout, error)
-	UpdateWorkout(workout *Workout) error
-	DeleteWorkout(id int) error
-	GetWorkoutOwner(id int) (int, error)
+type WorkoutPatch struct {
+	Title           *string
+	Description     *string
+	DurationMinutes *int
+	CaloriesBurned  *int
+	// Entries is nil when the caller wants to leave entries untouched.
+	// A non-nil pointer (even to an empty slice) triggers a full replace.
+	Entries *[]WorkoutEntry
 }
 
-func (pg *PostgresWorkoutStore) CreateWorkout(workout *Workout) (*Workout, error) {
-	tx, err := pg.db.Begin()
+type WorkoutStore interface {
+	CreateWorkout(ctx context.Context, workout *Workout) (*Workout, error)
+	GetWorkoutByID(ctx context.Context, id int) (*Workout, error)
+	UpdateWorkout(ctx context.Context, id int, userID int, patch WorkoutPatch) (*Workout, error)
+	DeleteWorkout(ctx context.Context, id int) error
+	GetWorkoutOwner(ctx context.Context, id int) (int, error)
+}
+
+func (pg *PostgresWorkoutStore) CreateWorkout(ctx context.Context, workout *Workout) (*Workout, error) {
+	tx, err := pg.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -53,9 +65,9 @@ func (pg *PostgresWorkoutStore) CreateWorkout(workout *Workout) (*Workout, error
 			  RETURNING id`
 
 	// Insert the workout
-	err = tx.QueryRow(query, workout.UserID, workout.Title, workout.Description, workout.DurationMinutes, workout.CaloriesBurned).Scan(&workout.ID)
+	err = tx.QueryRowContext(ctx, query, workout.UserID, workout.Title, workout.Description, workout.DurationMinutes, workout.CaloriesBurned).Scan(&workout.ID)
 	if err != nil {
-		return nil, err
+		return nil, classify(err)
 	}
 
 	// Insert the workout entries
@@ -67,9 +79,9 @@ func (pg *PostgresWorkoutStore) CreateWorkout(workout *Workout) (*Workout, error
 		`
 
 		entry := &workout.Entries[i]
-		err = tx.QueryRow(query, workout.ID, entry.ExerciseName, entry.Sets, entry.Reps, entry.DurationSeconds, entry.Weight, entry.Notes, entry.OrderIndex).Scan(&entry.ID)
+		err = tx.QueryRowContext(ctx, query, workout.ID, entry.ExerciseName, entry.Sets, entry.Reps, entry.DurationSeconds, entry.Weight, entry.Notes, entry.OrderIndex).Scan(&entry.ID)
 		if err != nil {
-			return nil, err
+			return nil, classify(err)
 		}
 	}
 
@@ -80,14 +92,14 @@ func (pg *PostgresWorkoutStore) CreateWorkout(workout *Workout) (*Workout, error
 	return workout, nil
 }
 
-func (pg *PostgresWorkoutStore) GetWorkoutByID(id int) (*Workout, error) {
+func (pg *PostgresWorkoutStore) GetWorkoutByID(ctx context.Context, id int) (*Workout, error) {
 	query := `SELECT id, user_id, title, description, duration_minutes, calories_burned
 			  FROM workouts
 			  WHERE id = $1`
 
 	workout := &Workout{}
-	err := pg.db.QueryRow(query, id).Scan(&workout.ID, &workout.UserID, &workout.Title, &workout.Description, &workout.DurationMinutes, &workout.CaloriesBurned)
-	if err == sql.ErrNoRows {
+	err := pg.db.QueryRowContext(ctx, query, id).Scan(&workout.ID, &workout.UserID, &workout.Title, &workout.Description, &workout.DurationMinutes, &workout.CaloriesBurned)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 
@@ -100,7 +112,7 @@ func (pg *PostgresWorkoutStore) GetWorkoutByID(id int) (*Workout, error) {
 					 WHERE workout_id = $1
 					 ORDER BY order_index`
 
-	rows, err := pg.db.Query(entriesQuery, workout.ID)
+	rows, err := pg.db.QueryContext(ctx, entriesQuery, workout.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -123,70 +135,129 @@ func (pg *PostgresWorkoutStore) GetWorkoutByID(id int) (*Workout, error) {
 	return workout, nil
 }
 
-func (pg *PostgresWorkoutStore) UpdateWorkout(workout *Workout) error {
-	tx, err := pg.db.Begin()
+func (pg *PostgresWorkoutStore) UpdateWorkout(ctx context.Context, id int, userID int, patch WorkoutPatch) (*Workout, error) {
+	tx, err := pg.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
 
-	query := `UPDATE workouts
-			  SET title = $1, description = $2, duration_minutes = $3, calories_burned = $4
-			  WHERE id = $5`
+	// Single round-trip: enforce ownership in SQL and preserve unspecified
+	// fields via COALESCE. Explicit casts keep pgx happy about parameter types
+	// when the typed pointer is nil.
+	updateQuery := `UPDATE workouts
+					SET title = COALESCE($1::text, title),
+					    description = COALESCE($2::text, description),
+					    duration_minutes = COALESCE($3::int, duration_minutes),
+					    calories_burned = COALESCE($4::int, calories_burned)
+					WHERE id = $5 AND user_id = $6
+					RETURNING id, user_id, title, description, duration_minutes, calories_burned`
 
-	result, err := tx.Exec(query, workout.Title, workout.Description, workout.DurationMinutes, workout.CaloriesBurned, workout.ID)
+	workout := &Workout{}
+	err = tx.QueryRowContext(
+		ctx,
+		updateQuery,
+		patch.Title,
+		patch.Description,
+		patch.DurationMinutes,
+		patch.CaloriesBurned,
+		id,
+		userID,
+	).Scan(
+		&workout.ID,
+		&workout.UserID,
+		&workout.Title,
+		&workout.Description,
+		&workout.DurationMinutes,
+		&workout.CaloriesBurned,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Disambiguate 404 vs 403 inside the same tx.
+		var ownerID int
+		probeErr := tx.QueryRowContext(ctx, `SELECT user_id FROM workouts WHERE id = $1`, id).Scan(&ownerID)
+		if errors.Is(probeErr, sql.ErrNoRows) {
+			return nil, ErrWorkoutNotFound
+		}
+		if probeErr != nil {
+			return nil, probeErr
+		}
+		if ownerID != userID {
+			return nil, ErrForbidden
+		}
+		// Row exists with matching user but UPDATE touched 0 rows — shouldn't
+		// happen; treat defensively as not found.
+		return nil, ErrWorkoutNotFound
+	}
 	if err != nil {
-		return err
+		return nil, classify(err)
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rowsAffected == 0 {
-		return sql.ErrNoRows
-	}
-
-	// For simplicity, delete existing entries and re-insert
-	_, err = tx.Exec(`DELETE FROM workout_entries WHERE workout_id = $1`, workout.ID)
-	if err != nil {
-		return err
-	}
-
-	for i := range workout.Entries {
-		query := `
-			INSERT INTO workout_entries (workout_id, exercise_name, sets, reps, duration_seconds, weight, notes, order_index)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			RETURNING id
-		`
-
-		entry := &workout.Entries[i]
-		err = tx.QueryRow(query, workout.ID, entry.ExerciseName, entry.Sets, entry.Reps, entry.DurationSeconds, entry.Weight, entry.Notes, entry.OrderIndex).Scan(&entry.ID)
+	// Entries: nil => leave existing rows untouched; non-nil => full replace.
+	if patch.Entries != nil {
+		_, err = tx.ExecContext(ctx, `DELETE FROM workout_entries WHERE workout_id = $1`, workout.ID)
 		if err != nil {
-			return err
+			return nil, err
+		}
+
+		newEntries := *patch.Entries
+		for i := range newEntries {
+			insertQuery := `
+				INSERT INTO workout_entries (workout_id, exercise_name, sets, reps, duration_seconds, weight, notes, order_index)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+				RETURNING id
+			`
+
+			entry := &newEntries[i]
+			err = tx.QueryRowContext(ctx, insertQuery, workout.ID, entry.ExerciseName, entry.Sets, entry.Reps, entry.DurationSeconds, entry.Weight, entry.Notes, entry.OrderIndex).Scan(&entry.ID)
+			if err != nil {
+				return nil, classify(err)
+			}
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return err
+	// Re-read entries inside the tx so the handler gets a full response.
+	entriesQuery := `SELECT id, exercise_name, sets, reps, duration_seconds, weight, notes, order_index
+					 FROM workout_entries
+					 WHERE workout_id = $1
+					 ORDER BY order_index`
+
+	rows, err := tx.QueryContext(ctx, entriesQuery, workout.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		entry := WorkoutEntry{}
+		if err := rows.Scan(&entry.ID, &entry.ExerciseName, &entry.Sets, &entry.Reps, &entry.DurationSeconds, &entry.Weight, &entry.Notes, &entry.OrderIndex); err != nil {
+			return nil, err
+		}
+		workout.Entries = append(workout.Entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
-	return nil
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return workout, nil
 }
 
-func (pg *PostgresWorkoutStore) DeleteWorkout(id int) error {
-	tx, err := pg.db.Begin()
+func (pg *PostgresWorkoutStore) DeleteWorkout(ctx context.Context, id int) error {
+	tx, err := pg.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(`DELETE FROM workout_entries WHERE workout_id = $1`, id)
+	_, err = tx.ExecContext(ctx, `DELETE FROM workout_entries WHERE workout_id = $1`, id)
 	if err != nil {
 		return err
 	}
 
-	result, err := tx.Exec(`DELETE FROM workouts WHERE id = $1`, id)
+	result, err := tx.ExecContext(ctx, `DELETE FROM workouts WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -206,13 +277,13 @@ func (pg *PostgresWorkoutStore) DeleteWorkout(id int) error {
 	return nil
 }
 
-func (pg *PostgresWorkoutStore) GetWorkoutOwner(id int) (int, error) {
+func (pg *PostgresWorkoutStore) GetWorkoutOwner(ctx context.Context, id int) (int, error) {
 	query := `SELECT user_id FROM workouts WHERE id = $1`
 
 	var userID int
-	err := pg.db.QueryRow(query, id).Scan(&userID)
-	if err == sql.ErrNoRows {
-		return 0, nil
+	err := pg.db.QueryRowContext(ctx, query, id).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrWorkoutNotFound
 	}
 	if err != nil {
 		return 0, err

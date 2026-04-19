@@ -1,22 +1,38 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"log"
+	"time"
 
 	_ "github.com/jackc/pgx/v4/stdlib"
 	"github.com/pressly/goose/v3"
 )
 
-func Open() (*sql.DB, error) {
-	db, err := sql.Open("pgx", "host=localhost port=5432 user=postgres password=postgres dbname=postgres sslmode=disable")
-
+// Open opens a database connection using the supplied DSN, applies pool
+// limits, and verifies connectivity with a PingContext before returning.
+func Open(ctx context.Context, dsn string, logger *log.Logger) (*sql.DB, error) {
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	fmt.Println("Database connection opened successfully")
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(25)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	if err := db.PingContext(ctx); err != nil {
+		// Best-effort close so we don't leak the pool on a failed ping.
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	if logger != nil {
+		logger.Println("Database connection opened successfully")
+	}
 
 	return db, nil
 }
@@ -41,6 +57,5 @@ func Migrate(db *sql.DB, dir string) error {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	fmt.Println("Database migrated successfully")
 	return nil
 }
