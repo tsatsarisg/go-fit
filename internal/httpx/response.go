@@ -1,19 +1,37 @@
-package utils
+package httpx
 
 import (
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type Envelope map[string]any
 
+// prettyJSON is toggled on at startup in development so responses are
+// human-readable; in production we use compact json.Marshal for throughput.
+var prettyJSON atomic.Bool
+
+// SetPrettyJSON enables or disables indented JSON responses. Intended to be
+// called once at startup from config wiring.
+func SetPrettyJSON(pretty bool) { prettyJSON.Store(pretty) }
+
 func WriteJson(w http.ResponseWriter, status int, data Envelope) error {
 	w.Header().Set("Content-Type", "application/json")
-	js, err := json.MarshalIndent(data, "", "  ")
+
+	var (
+		js  []byte
+		err error
+	)
+	if prettyJSON.Load() {
+		js, err = json.MarshalIndent(data, "", "  ")
+	} else {
+		js, err = json.Marshal(data)
+	}
 	if err != nil {
 		http.Error(w, "Error encoding JSON", http.StatusInternalServerError)
 		return err
