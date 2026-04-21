@@ -1,0 +1,63 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# CI / tooling metadata (not needed in the build context)
+.github
+.vscode
+.idea
+.editorconfig
+
+# Local secrets / env
+.env
+.env.*
+!.env.example
+
+# Build outputs
+bin/
+dist/
+tmp/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test / coverage output
+*.out
+coverage.*
+*.test
+
+# Local DB data (bind-mounted dev Postgres data)
+database/
+
+# Developer notes and scratch
+post_notes.txt
+REVIEW_FINDINGS.md
+
+# Docs: keep README and LICENSE in the context (labels reference them),
+# exclude everything else.
+*.md
+!README.md
+
+# Compose files — not needed inside the image
+docker-compose*.yml
+compose*.yaml
+
+# Dockerfiles themselves are not needed at image build time
+Dockerfile
+Dockerfile.*
+.dockerignore
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Vendor (we use the module cache, not vendor)
+vendor/
+
+# IMPORTANT: do NOT ignore these — they are embedded via go:embed / needed
+# for the build:
+#   migrations/
+#   go.mod
+#   go.sum

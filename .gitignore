@@ -9,6 +9,11 @@
 
 # Output of the go coverage tool
 *.out
+coverage.html
+
+# air hot-reload scratch dir
+tmp/
+build-errors.log
 
 # Dependency directories (remove the comment to include it)
 vendor/
@@ -30,6 +35,9 @@ go.work
 
 # Environment files
 .env
+.env.local
+.env.*.local
+!.env.example
 
 # Generated files
 /*.log

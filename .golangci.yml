@@ -1,0 +1,86 @@
+# golangci-lint config for go-fit.
+# Pin this file's version in CI (see .github/workflows/ci.yml).
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+issues:
+  exclude-dirs:
+    - migrations
+    - bin
+    - tmp
+    - vendor
+    - database
+  exclude-rules:
+    # Test files routinely ignore errors on teardown; don't punish that.
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+        - gocyclo
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - gosec
+    - gocyclo
+    - misspell
+    - revive
+    - gofmt
+    - goimports
+    # gocritic intentionally OFF: in our experience it pulls in opinionated
+    # style nits that conflict with revive/staticcheck. Revisit after we've
+    # stabilised revive rules.
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # cosmetic, regularly at odds with struct-field clarity
+  revive:
+    severity: warning
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+        disabled: true          # don't demand doc comments on every export
+      - name: if-return
+      - name: increment-decrement
+      - name: var-declaration
+      - name: package-comments
+        disabled: true
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+        disabled: true
+      - name: unreachable-code
+      - name: redefines-builtin-id
+  gosec:
+    excludes:
+      - G104  # duplicated by errcheck
+      - G115  # integer conversion overflow — too many false positives in HTTP code
+  goimports:
+    local-prefixes: github.com/tsatsarisg/go-fit
+  misspell:
+    locale: US

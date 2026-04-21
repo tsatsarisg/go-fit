@@ -1,0 +1,30 @@
+# air config for local hot-reload development.
+# Docs: https://github.com/air-verse/air
+
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/api ./cmd/api"
+  bin = "./tmp/api"
+  full_bin = "./tmp/api"
+  include_ext = ["go", "sql", "tpl", "tmpl", "html"]
+  exclude_dir = ["tmp", "bin", "vendor", "database", ".git", ".github"]
+  exclude_regex = ["_test\\.go"]
+  delay = 500
+  stop_on_error = true
+  send_interrupt = true
+  kill_delay = "2s"
+  log = "build-errors.log"
+
+[log]
+  time = true
+
+[color]
+  main    = "magenta"
+  watcher = "cyan"
+  build   = "yellow"
+  runner  = "green"
+
+[misc]
+  clean_on_exit = true

@@ -1,0 +1,56 @@
+# Prod-like override for local runs of the distroless image.
+#
+# Usage:
+#   DATABASE_URL=postgres://... docker compose -f docker-compose.yml \
+#     -f docker-compose.prod.yml up --build app
+#
+# Healthcheck note: distroless/static has no shell and no curl/wget, so a
+# container-level HEALTHCHECK would need a static probe binary baked into the
+# image. We intentionally skip it here and rely on orchestrator-level HTTP
+# probes (k8s readinessProbe / ALB target group / etc.) hitting /health. If
+# you need a compose-local healthcheck, switch the final stage to
+# gcr.io/distroless/base-debian12:nonroot (which ships wget) and add:
+#   healthcheck:
+#     test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+
+name: go-fit
+
+services:
+  app:
+    container_name: workout-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: final
+      args:
+        GIT_SHA: ${GIT_SHA:-local}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+        VERSION: ${VERSION:-dev}
+    image: go-fit:local
+    environment:
+      APP_ENV: production
+      PORT: "8080"
+      # DATABASE_URL must be supplied from the host env — we do NOT bake
+      # secrets into the compose file.
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required for prod compose}
+    ports:
+      - "8080:8080"
+    # No source mount, no hot reload — this runs the same static binary the
+    # release workflow publishes.
+    volumes: []
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 256M
+        reservations:
+          cpus: "0.10"
+          memory: 64M
+    networks:
+      - workout-network

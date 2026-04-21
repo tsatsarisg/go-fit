@@ -1,35 +1,85 @@
-version: "3.8"
+# Dev-first compose stack for go-fit.
+# - Postgres bumped from 12.4-alpine (EOL) to 16-alpine.
+# - App service builds the `dev` target (air hot-reload), bind-mounts source.
+# - Named volumes replace the old ./database/postgres-data bind-mount so the
+#   working tree stays clean and the .gitignore rules don't fight us.
+
+name: go-fit
 
 services:
   db:
-    container_name: "workout-db"
-    image: postgres:12.4-alpine
-    volumes:
-      - ./database/postgres-data:/var/lib/postgresql/data:rw
+    container_name: workout-db
+    image: postgres:16-alpine
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: "postgres"
-      POSTGRES_PASSWORD: "postgres"
-      POSTGRES_DB: "postgres"
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
     networks:
       - workout-network
 
   test_db:
-    container_name: "workout-test-db"
-    image: postgres:12.4-alpine
-    volumes:
-      - ./database/postgres-test-data:/var/lib/postgresql/data:rw
+    container_name: workout-test-db
+    image: postgres:16-alpine
     ports:
       - "5433:5432"
     environment:
-      POSTGRES_USER: "postgres"
-      POSTGRES_PASSWORD: "postgres"
-      POSTGRES_DB: "postgres"
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata_test:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
     networks:
       - workout-network
+
+  app:
+    container_name: workout-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      PORT: "8080"
+      # Uses the in-cluster db hostname; sslmode=disable is fine in dev
+      # (config.go only rejects sslmode=disable when APP_ENV=production).
+      DATABASE_URL: postgres://postgres:postgres@db:5432/postgres?sslmode=disable
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/app
+      # Cache Go module and build caches across container restarts.
+      - gomodcache:/go/pkg/mod
+      - gobuildcache:/root/.cache/go-build
+    restart: unless-stopped
+    networks:
+      - workout-network
+
+volumes:
+  pgdata:
+  pgdata_test:
+  gomodcache:
+  gobuildcache:
 
 networks:
   workout-network:

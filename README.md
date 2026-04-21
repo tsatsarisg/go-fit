@@ -1,119 +1,151 @@
 # go-fit
 
-A small Go HTTP service for managing users and workouts. The project provides a simple REST API backed by PostgreSQL, embedded SQL migrations, and a lightweight application initializer.
+A small, opinionated Go HTTP service for managing users and workouts. Built as a portfolio / reference project that tries to show what a pragmatic, production-shaped Go backend looks like: bounded contexts, ports-and-adapters, typed IDs, a real auth model, graceful shutdown, embedded migrations, structured logging, a multi-stage container build, and CI that actually gates merges.
 
-## Overview
+- **Module:** `github.com/tsatsarisg/go-fit`
+- **Go:** 1.24.4 (pinned in `go.mod`)
+- **Entrypoint:** `cmd/api/main.go`
+- **Database:** PostgreSQL 16
 
-- Module: `github.com/tsatsarisg/go-fit`
-- Go version: set in `go.mod` (this repo uses Go 1.24.x)
+---
 
-This repository includes handlers for users and workouts, a Postgres-backed store layer, and SQL migrations embedded under the `migrations/` package. The HTTP router is implemented with `chi` and routes are registered in `internal/routes`.
+## Quickstart
 
-## Quick start (recommended)
-
-The easiest way to run the app for local development is with Docker Compose. The compose file starts a Postgres instance and mounts a local data directory.
+The whole stack — app with hot reload + Postgres 16 — comes up with one command:
 
 ```bash
-# Start Postgres in docker-compose (creates a local DB for the app)
-docker-compose up -d
-
-# Build and run the app (defaults to port 8080)
-go run main.go
-
-# Or build a binary
-go build -o bin/server .
-./bin/server
+make compose-up
 ```
 
-By default the application connects to Postgres using the connection string in `internal/store.Open()`:
-
-host=localhost port=5432 user=postgres password=postgres dbname=postgres sslmode=disable
-
-If you run the database via Docker Compose the project already exposes Postgres on localhost:5432 and uses a persistent volume at `./database/postgres-data`.
-
-If you prefer to run without Docker, ensure you have a running Postgres instance and either update `internal/store.Open()` or set the appropriate environment/connection values before running the app.
-
-## Database & migrations
-
-- SQL migration files live in `migrations/` and are embedded in the binary. Migrations are applied on application startup by `internal/app.NewApplication()` using `pressly/goose` and the embedded FS.
-- Persistent Postgres data for local development live under `database/postgres-data/` (used by the project's compose file).
-
-To re-run migrations against a local Postgres instance, start the app (it will run the migrations on startup) or call `store.Migrate` with an appropriate DB handle.
-
-## HTTP API
-
-The project exposes the following routes (registered in `internal/routes/routes.go`):
-
-- GET /health
-
-  - Health check. Returns 200 OK with body `OK`.
-
-- Workouts (authenticated)
-
-  - GET /workouts/{id} — retrieve a workout by id
-  - POST /workouts — create a new workout (JSON body)
-  - PUT /workouts/{id} — update an existing workout
-  - DELETE /workouts/{id} — delete a workout
-
-- Users
-
-  - POST /users — register a new user (JSON body)
-
-- Tokens
-  - POST /tokens/authentication — create an authentication token (used to obtain JWTs / session tokens)
-
-Note: workout endpoints are registered inside an authenticated group and require a valid token. Authentication and middleware are implemented in `internal/middleware` and `internal/api/token_handler.go`.
-
-Examples:
+Then:
 
 ```bash
-# Health
 curl -i http://localhost:8080/health
-
-# Create a user
-curl -X POST http://localhost:8080/users \
-    -H "Content-Type: application/json" \
-    -d '{"username":"alice","email":"alice@example.com","password":"s3cret"}'
-
-# Create a token (authentication)
-curl -X POST http://localhost:8080/tokens/authentication \
-    -H "Content-Type: application/json" \
-    -d '{"username":"alice","password":"s3cret"}'
-
-# Create a workout (authenticated — replace <TOKEN> with the token returned above)
-curl -X POST http://localhost:8080/workouts \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer <TOKEN>" \
-    -d '{"title":"Morning Run","duration_minutes":30}'
+# HTTP/1.1 200 OK
+# OK
 ```
 
-Responses use a JSON envelope helper defined in `internal/utils` (see `utils.WriteJson`), typically returning `{"error": "..."}` on failures or `{"workout": ...}` / `{"user": ...}` on success.
-
-## Running tests
-
-There are unit tests in the `store` package and elsewhere (look for `_test.go` files). Run all tests with:
+Tear it down:
 
 ```bash
-go test ./...
+make compose-down               # preserve data
+make compose-down-volumes       # nuke the pg volume too
 ```
 
-If tests depend on a database, prefer using the `test_db` service from `docker-compose.yml` (it mounts `database/postgres-test-data`) or run a separate test Postgres instance.
+If you prefer running the binary directly against a local Postgres:
 
-## Development notes
+```bash
+cp .env.example .env            # tweak if needed
+make run                        # equivalent to: go run ./cmd/api
+```
 
-- Application initialization is in `internal/app/app.go`. It opens the DB (using `internal/store.Open()`), runs migrations, creates stores and handlers, and returns an `Application` struct.
-- Routes are wired in `internal/routes/routes.go` and use handlers in `internal/api`.
-- Store implementations (Postgres) are in `internal/store`.
-- Utility helpers (JSON envelope, id parsing) are in `internal/utils`.
+See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for the full dev/prod workflow.
 
-Suggested improvements / next steps:
+---
 
-- Add more tests (handlers + store integration tests using a test container or docker-compose).
-- Add graceful shutdown handling in `main.go` (the current implementation starts the server and logs fatal on error).
-- Improve configuration handling (e.g., a config struct, environment parsing, or use of `github.com/joho/godotenv`).
+## What's in here
+
+```
+cmd/api/              HTTP server entrypoint (main package)
+internal/
+  app/                Wires config → stores → services → handlers → router
+  config/             Env-driven config (APP_ENV, PORT, DATABASE_URL, PG*)
+  auth/               Bounded context: tokens, middleware, login/logout
+  user/               Bounded context: registration, password hashing
+  workout/            Bounded context: workout aggregate + entries
+  httpx/              Transport plumbing: JSON envelope, decode, error mapping, logger
+  platform/postgres/  DB open/ping/migrate + pgx error classification
+migrations/           Embedded goose SQL migrations (go:embed)
+docs/                 Architecture, API, configuration, operations, contributing
+```
+
+Architecture is bounded-context + ports-and-adapters. Each feature package owns its domain model, service (application layer), store port (interface), and postgres adapter. Handlers are thin — they decode, call the service, and format the response. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+---
+
+## API at a glance
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| GET | `/health` | no | Liveness probe — returns `200 OK` |
+| POST | `/users` | no | Register a new user |
+| POST | `/tokens/authentication` | no | Log in, receive a bearer token |
+| POST | `/tokens/authentication/logout` | yes | Revoke all tokens for the caller |
+| GET | `/workouts/{id}` | yes | Fetch a workout the caller owns |
+| POST | `/workouts` | yes | Create a workout |
+| PATCH | `/workouts/{id}` | yes | Partial-update (RFC 5789 merge patch) |
+| DELETE | `/workouts/{id}` | yes | Delete a workout the caller owns |
+
+Full request/response examples, error shapes, and status code semantics live in [`docs/API.md`](docs/API.md).
+
+---
+
+## Configuration
+
+All runtime config is read from the environment. See [`.env.example`](.env.example) for a runnable template and [`docs/OPERATIONS.md`](docs/OPERATIONS.md#configuration) for the full table and production notes (SSL enforcement, pool sizing, secrets handling).
+
+The two you almost always care about:
+
+| Var | Default | Notes |
+| --- | --- | --- |
+| `APP_ENV` | `development` | `production` enables JSON-compact responses and enforces `sslmode=require` |
+| `DATABASE_URL` | discrete `PG*` fallback | Wins over `PGHOST`/etc. when set |
+
+---
+
+## Development loop
+
+```bash
+make help                       # list every target
+make run                        # go run ./cmd/api
+make test                       # go test -race -count=1 ./...
+make lint                       # golangci-lint run
+make fmt vet tidy               # standard go hygiene
+make cover                      # coverage.html
+make compose-up                 # full dev stack with hot reload
+```
+
+The dev container uses [air](https://github.com/air-verse/air) for hot reload; source is bind-mounted, so saves trigger a rebuild in ~500ms.
+
+More detail, including the integration-test flow that hits the `test_db` service on port 5433, is in [`docs/OPERATIONS.md`](docs/OPERATIONS.md#development).
+
+---
+
+## Tests
+
+```bash
+make test                       # unit tests with race detector
+make test-integration           # runs against test_db (localhost:5433)
+```
+
+Integration tests expect `test_db` from `docker-compose.yml` to be healthy; CI spins up a Postgres 16 service container for the same purpose.
+
+---
+
+## Build & deploy
+
+The production image is a two-stage build that ends in `gcr.io/distroless/static-debian12:nonroot` — no shell, no package manager, no libc, runs as UID 65532.
+
+```bash
+make docker-build               # build the final image locally
+DATABASE_URL=postgres://... make compose-prod-up   # run the prod image locally
+```
+
+Release is tag-driven: push a `vX.Y.Z` tag and GitHub Actions builds a multi-arch (`linux/amd64`, `linux/arm64`) image, publishes to GHCR, attaches SBOM + provenance, and signs it with cosign (keyless OIDC).
+
+Full pipeline details, image layer breakdown, and deployment notes are in [`docs/OPERATIONS.md`](docs/OPERATIONS.md#deployment).
+
+---
+
+## Docs
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — why the code is shaped like this (bounded contexts, layering, dependency rules, common patterns)
+- [`docs/API.md`](docs/API.md) — full HTTP reference with request/response examples and error taxonomy
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — configuration, local dev, testing, Docker, CI/CD, deployment
+- [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — commit style, branching, PR expectations
+
+---
 
 ## License
 
-See the `LICENSE` file in the repository root for licensing details.
-
-If you'd like the README to include additional details (example request/response bodies, required env vars, or a Postgres connection example), tell me which sections you'd like expanded and I will add them.
+MIT — see [`LICENSE`](LICENSE).
