@@ -3,6 +3,7 @@ package workout
 import (
 	"context"
 	"database/sql"
+	"os"
 	"testing"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -12,10 +13,16 @@ import (
 	"github.com/tsatsarisg/go-fit/internal/user"
 )
 
+const defaultTestDSN = "host=localhost port=5433 user=postgres password=postgres dbname=postgres sslmode=disable"
+
 // setupTestDB wipes the workouts-related tables and seeds a single user so
 // the FK on workouts.user_id can be satisfied. Returns the seeded user's id.
 func setupTestDB(t *testing.T) (*sql.DB, user.UserID) {
-	db, err := sql.Open("pgx", "host=localhost port=5433 user=postgres password=postgres dbname=postgres sslmode=disable")
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		dsn = defaultTestDSN
+	}
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("failed to connect to test database: %v", err)
 	}

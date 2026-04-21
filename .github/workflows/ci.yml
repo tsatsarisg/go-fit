@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 env:
-  GOLANGCI_LINT_VERSION: v1.61.0
+  GOLANGCI_LINT_VERSION: v1.64.8
 
 jobs:
   lint:
@@ -54,6 +54,7 @@ jobs:
     env:
       APP_ENV: development
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
 
     steps:
       - uses: actions/checkout@v4

@@ -2,6 +2,8 @@ module github.com/tsatsarisg/go-fit
 
 go 1.24.4
 
+toolchain go1.25.9
+
 require (
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/jackc/pgx/v5 v5.7.5
